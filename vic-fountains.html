@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Victoria Drinking Fountains</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --bg:#ffffff; --ink:#0f1b2d; --muted:#5b6b80; --line:#e3e8ef;
+    --accent:#0a84ff; --accent-ink:#ffffff; --water:#0aa5d8; --area:#ff6a3d;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:#dfe7ee}
+  #map{position:absolute;inset:0}
+  .topbar{
+    position:absolute;z-index:1000;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));
+    max-width:440px;
+  }
+  .card{background:var(--bg);border-radius:14px;box-shadow:0 6px 24px rgba(15,27,45,.18)}
+  .search{display:flex;gap:6px;padding:8px}
+  .search input{
+    flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:16px;outline:none
+  }
+  .search input:focus{border-color:var(--accent)}
+  .btn{
+    border:0;border-radius:10px;padding:0 14px;font-size:15px;font-weight:600;cursor:pointer;
+    background:var(--accent);color:var(--accent-ink);white-space:nowrap
+  }
+  .btn.ghost{background:#eef3f9;color:var(--ink)}
+  .status{padding:0 12px 10px;font-size:13px;color:var(--muted)}
+  .status b{color:var(--ink)}
+  .results{list-style:none;margin:0;padding:0 8px 8px;max-height:45vh;overflow:auto}
+  .results li{padding:10px;border-radius:10px;cursor:pointer;font-size:14px;line-height:1.3}
+  .results li:hover,.results li:focus{background:#f1f5fa;outline:none}
+  .results .kind{display:inline-block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-top:2px}
+
+  .panel{
+    position:absolute;z-index:1000;left:12px;bottom:calc(12px + env(safe-area-inset-bottom));
+    width:min(440px,calc(100% - 24px));max-height:42vh;display:none;flex-direction:column
+  }
+  .panel.open{display:flex}
+  .panel header{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;border-bottom:1px solid var(--line)}
+  .panel header h2{font-size:16px;margin:0;flex:1;line-height:1.25}
+  .panel header .count{font-size:13px;color:var(--muted);font-weight:500;display:block}
+  .panel .x{background:#eef3f9;border:0;border-radius:50%;width:30px;height:30px;font-size:16px;cursor:pointer}
+  .list{list-style:none;margin:0;padding:6px;overflow:auto}
+  .list li{padding:9px 10px;border-radius:10px;cursor:pointer;font-size:14px;display:flex;gap:10px;align-items:flex-start}
+  .list li:hover{background:#f1f5fa}
+  .list .dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--water);margin-top:5px}
+  .list .sub{color:var(--muted);font-size:12px}
+  .empty{padding:14px;color:var(--muted);font-size:14px}
+
+  .fab{
+    position:absolute;z-index:1000;right:12px;bottom:calc(24px + env(safe-area-inset-bottom));
+    display:flex;flex-direction:column;gap:8px
+  }
+  .fab button{width:44px;height:44px;border-radius:12px;border:0;background:var(--bg);box-shadow:0 4px 16px rgba(15,27,45,.2);font-size:20px;cursor:pointer}
+
+  .fountain-icon{
+    width:22px;height:22px;border-radius:50%;background:var(--water);border:2px solid #fff;
+    box-shadow:0 1px 4px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center
+  }
+  .fountain-icon svg{width:12px;height:12px;fill:#fff}
+  .me-icon{width:16px;height:16px;border-radius:50%;background:#0a84ff;border:3px solid #fff;box-shadow:0 0 0 6px rgba(10,132,255,.25)}
+
+  .leaflet-popup-content{margin:12px 14px;font-size:14px;line-height:1.4;min-width:200px}
+  .pop h3{margin:0 0 2px;font-size:15px}
+  .pop .type{color:var(--muted);font-size:12px;margin-bottom:6px}
+  .pop .tags{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+  .pop .tag{background:#e8f6fb;color:#06617f;border-radius:999px;padding:2px 8px;font-size:12px}
+  .pop .tag.no{background:#fdecec;color:#9b1c1c}
+  .pop .links{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+  .pop .links a{color:var(--accent);font-weight:600;text-decoration:none;font-size:13px}
+  .pop .desc{font-size:13px;margin:4px 0}
+
+  .loading{
+    position:absolute;z-index:1100;left:50%;top:50%;transform:translate(-50%,-50%);
+    padding:16px 20px;text-align:center;font-size:14px;max-width:300px
+  }
+  .spinner{width:28px;height:28px;border:3px solid #d6e2ee;border-top-color:var(--accent);border-radius:50%;margin:0 auto 10px;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="topbar card">
+  <form class="search" id="searchForm" autocomplete="off">
+    <input id="q" type="search" placeholder="Search a suburb, town or locality…" aria-label="Search a suburb, town or locality" enterkeyhint="search">
+    <button class="btn" type="submit">Search</button>
+  </form>
+  <div class="status" id="status">Search a suburb, town or locality to load its fountains.</div>
+  <ul class="results hidden" id="results"></ul>
+</div>
+
+<div class="panel card" id="panel">
+  <header>
+    <h2 id="panelTitle">Area<span class="count" id="panelCount"></span></h2>
+    <button class="x" id="clearBtn" aria-label="Clear area">✕</button>
+  </header>
+  <ul class="list" id="list"></ul>
+</div>
+
+<div class="fab">
+  <button id="locateBtn" title="Show my location" aria-label="Show my location">📍</button>
+  <button id="allBtn" title="Clear and zoom out" aria-label="Clear and zoom out">🗺️</button>
+</div>
+
+<div class="loading card hidden" id="loading">
+  <div class="spinner"></div>
+  <div id="loadingText">Loading…</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  // Search + borders: Nominatim (OpenStreetMap's geocoder). Fountains: Overpass, bbox only (fast).
+  const NOMINATIM = "https://nominatim.openstreetmap.org/search";
+  const OVERPASS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter"
+  ];
+  const VIC_BOUNDS = [[-39.25, 140.9], [-33.95, 150.05]];
+
+  const map = L.map("map", { zoomControl: false }).fitBounds(VIC_BOUNDS);
+  L.control.zoom({ position: "topright" }).addTo(map);
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 19,
+    attribution: 'Tiles &copy; Esri &mdash; Data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  const fountainLayer = L.featureGroup().addTo(map);
+  const DROP = '<svg viewBox="0 0 24 24"><path d="M12 2C9 7 5 10.5 5 15a7 7 0 0 0 14 0c0-4.5-4-8-7-13z"/></svg>';
+  const fountainIcon = L.divIcon({ className: "", html: `<div class="fountain-icon">${DROP}</div>`, iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -10] });
+
+  let current = [], markerById = new Map(), borderLayer = null, meMarker = null;
+  const cache = new Map(); // place key -> fountains
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const setStatus = html => { $("status").innerHTML = html; };
+  const fmt = n => n.toLocaleString("en-AU");
+  const loading = (on, text) => { $("loading").classList.toggle("hidden", !on); if (text) $("loadingText").innerHTML = text; };
+
+  async function fetchWithTimeout(url, opts, ms) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    try { return await fetch(url, { ...opts, signal: c.signal }); }
+    finally { clearTimeout(t); }
+  }
+
+  function explain(e) {
+    const m = String(e && e.message || e);
+    if (/429/.test(m)) return "The fountain server is rate-limiting you after lots of tries. Wait about 30 seconds, then try again.";
+    if (/AbortError|aborted/i.test(m) || (e && e.name === "AbortError")) return "The server took too long. Try again.";
+    if (/Failed to fetch|Load failed|NetworkError/i.test(m)) return "Couldn't connect (" + esc(m) + "). Check your connection, or a content blocker, and try again.";
+    return "Something went wrong: " + esc(m);
+  }
+
+  // ---------- Search (Nominatim) ----------
+  async function findPlaces(q) {
+    const p = new URLSearchParams({
+      q: `${q}, Victoria, Australia`, format: "jsonv2", polygon_geojson: "1", polygon_threshold: "0.0003",
+      addressdetails: "1", limit: "10", countrycodes: "au", "accept-language": "en",
+      viewbox: "140.9,-33.95,150.05,-39.25", bounded: "1"
+    });
+    const res = await fetchWithTimeout(`${NOMINATIM}?${p}`, { headers: { Accept: "application/json" } }, 20000);
+    if (!res.ok) throw new Error("Search HTTP " + res.status);
+    const data = await res.json();
+    const hasPoly = r => /Polygon/.test(r.geojson && r.geojson.type);
+    return data
+      .filter(r => (r.address && r.address.state || "").includes("Victoria"))
+      .filter(r => hasPoly(r))
+      .sort((a, b) => (b.importance || 0) - (a.importance || 0));
+  }
+
+  const KIND = { suburb: "Suburb", town: "Town", city: "City", village: "Village", hamlet: "Locality",
+    locality: "Locality", neighbourhood: "Neighbourhood", municipality: "Council", county: "Council",
+    city_district: "District", administrative: "Area" };
+
+  function renderResults(items) {
+    const ul = $("results");
+    ul.innerHTML = "";
+    if (!items.length) ul.innerHTML = `<li class="empty">No suburb, town or locality with a border found. Check the spelling.</li>`;
+    for (const r of items) {
+      const li = document.createElement("li");
+      li.tabIndex = 0;
+      const name = r.name || r.display_name.split(",")[0];
+      const rest = r.display_name.split(",").slice(1, 3).join(",").trim();
+      li.innerHTML = `<div><b>${esc(name)}</b>${rest ? ` <span class="sub">${esc(rest)}</span>` : ""}</div>
+        <span class="kind">${esc(KIND[r.addresstype] || r.addresstype || "Area")}</span>`;
+      const pick = () => selectPlace(r);
+      li.addEventListener("click", pick);
+      li.addEventListener("keydown", e => { if (e.key === "Enter") pick(); });
+      ul.appendChild(li);
+    }
+    ul.classList.remove("hidden");
+  }
+
+  // ---------- Fountains (Overpass, bounding box) ----------
+  async function fountainsInBox(s, w, n, e) {
+    const bb = [s, w, n, e].map(v => v.toFixed(5)).join(",");
+    const query = `[out:json][timeout:25][bbox:${bb}];
+      (nwr["amenity"="drinking_water"];
+       nwr["amenity"="water_point"];
+       nwr["amenity"="fountain"]["drinking_water"="yes"];
+       nwr["man_made"="water_tap"]["drinking_water"="yes"];);
+      out center tags;`;
+    let lastErr;
+    for (const url of OVERPASS) {
+      try {
+        const res = await fetchWithTimeout(url, {
+          method: "POST", body: "data=" + encodeURIComponent(query),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        }, 30000);
+        if (!res.ok) throw new Error("Fountain server HTTP " + res.status);
+        const j = await res.json();
+        return j.elements || [];
+      } catch (err) { lastErr = err; }
+    }
+    throw lastErr;
+  }
+
+  // Point in polygon (GeoJSON order: [lon, lat])
+  function inRing(x, y, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  const inPoly = (x, y, rings) => inRing(x, y, rings[0]) && !rings.slice(1).some(r => inRing(x, y, r));
+  const inGeom = (x, y, g) => g.type === "Polygon" ? inPoly(x, y, g.coordinates)
+    : g.type === "MultiPolygon" ? g.coordinates.some(p => inPoly(x, y, p)) : false;
+
+  async function selectPlace(r) {
+    $("results").classList.add("hidden");
+    $("q").blur();
+    const name = r.name || r.display_name.split(",")[0];
+    const geom = r.geojson;
+
+    if (borderLayer) map.removeLayer(borderLayer);
+    borderLayer = L.geoJSON(geom, {
+      style: { color: "#ff6a3d", weight: 3, fillColor: "#ff6a3d", fillOpacity: 0.06, dashArray: "6 4" },
+      interactive: false
+    }).addTo(map);
+    const b = borderLayer.getBounds();
+    map.fitBounds(b, { padding: [30, 30], maxZoom: 16 });
+
+    const key = r.osm_type + r.osm_id;
+    let list = cache.get(key);
+    if (!list) {
+      loading(true, `Loading fountains inside <b>${esc(name)}</b>…`);
+      setStatus(`Loading fountains inside <b>${esc(name)}</b>…`);
+      let els;
+      try { els = await fountainsInBox(b.getSouth(), b.getWest(), b.getNorth(), b.getEast()); }
+      catch (err) { loading(false); setStatus(explain(err)); return; }
+      list = [];
+      for (const e of els) {
+        const lat = e.lat ?? (e.center && e.center.lat), lon = e.lon ?? (e.center && e.center.lon);
+        if (lat == null) continue;
+        const t = e.tags || {};
+        if (t.access === "private" || t.drinking_water === "no") continue;
+        if (!inGeom(lon, lat, geom)) continue;
+        list.push({ id: e.type[0] + e.id, type: e.type, osmId: e.id, lat, lon, tags: t });
+      }
+      cache.set(key, list);
+      loading(false);
+    }
+
+    fountainLayer.clearLayers(); markerById.clear(); current = list;
+    for (const f of list) {
+      const m = L.marker([f.lat, f.lon], { icon: fountainIcon, title: titleOf(f.tags) }).bindPopup(() => popupHtml(f), { maxWidth: 280 });
+      m.addTo(fountainLayer); markerById.set(f.id, m);
+    }
+    renderPanel(name, list);
+    setStatus(`<b>${fmt(list.length)}</b> fountain${list.length === 1 ? "" : "s"} inside <b>${esc(name)}</b>.`);
+  }
+
+  // ---------- Display ----------
+  function kindOf(t) {
+    if (t.amenity === "drinking_water") return t.bottle === "yes" ? "Drinking fountain · bottle refill" : "Drinking fountain";
+    if (t.amenity === "water_point") return "Water refill point";
+    if (t.amenity === "fountain") return "Fountain (drinkable)";
+    if (t.man_made === "water_tap") return "Drinking water tap";
+    return "Drinking water";
+  }
+  const titleOf = t => t.name || (t.description ? t.description.slice(0, 60) : "") || "Drinking fountain";
+
+  function popupHtml(f) {
+    const t = f.tags, chips = [];
+    const yn = (k, yes, no) => {
+      if (t[k] === "yes") chips.push(`<span class="tag">${yes}</span>`);
+      else if (t[k] === "no" && no) chips.push(`<span class="tag no">${no}</span>`);
+    };
+    yn("bottle", "Bottle refill", "No bottle refill");
+    yn("dog", "Dog bowl");
+    yn("wheelchair", "Wheelchair accessible", "Not wheelchair accessible");
+    if (t.fee === "yes") chips.push(`<span class="tag no">Fee</span>`);
+    if (t.seasonal && t.seasonal !== "no") chips.push(`<span class="tag no">Seasonal</span>`);
+    if (t.access && !["yes", "public", "permissive"].includes(t.access)) chips.push(`<span class="tag no">Access: ${esc(t.access)}</span>`);
+    if (t.indoor === "yes") chips.push(`<span class="tag">Indoor</span>`);
+    const ll = `${f.lat.toFixed(6)},${f.lon.toFixed(6)}`;
+    return `<div class="pop">
+      <h3>${esc(titleOf(t))}</h3>
+      <div class="type">${esc(kindOf(t))}</div>
+      ${t.description && t.name ? `<div class="desc">${esc(t.description)}</div>` : ""}
+      ${chips.length ? `<div class="tags">${chips.join("")}</div>` : ""}
+      ${t.opening_hours ? `<div class="desc">Hours: ${esc(t.opening_hours)}</div>` : ""}
+      ${t.operator ? `<div class="desc">Operator: ${esc(t.operator)}</div>` : ""}
+      <div class="links">
+        <a href="https://maps.apple.com/?daddr=${ll}&dirflg=w" target="_blank" rel="noopener">Apple Maps</a>
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${ll}&travelmode=walking" target="_blank" rel="noopener">Google Maps</a>
+        <a href="https://www.openstreetmap.org/${f.type}/${f.osmId}" target="_blank" rel="noopener">OSM</a>
+      </div></div>`;
+  }
+
+  function renderPanel(name, list) {
+    $("panelTitle").firstChild.textContent = name;
+    $("panelCount").textContent = `${fmt(list.length)} drinking fountain${list.length === 1 ? "" : "s"}`;
+    const ul = $("list");
+    ul.innerHTML = "";
+    if (!list.length) ul.innerHTML = `<li class="empty">No fountains mapped inside this border yet.</li>`;
+    for (const f of [...list].sort((a, b) => titleOf(a.tags).localeCompare(titleOf(b.tags)))) {
+      const t = f.tags, li = document.createElement("li");
+      const extras = [t.bottle === "yes" && "bottle refill", t.dog === "yes" && "dog bowl", t.wheelchair === "yes" && "accessible"].filter(Boolean).join(" · ");
+      li.innerHTML = `<span class="dot"></span><div><div>${esc(titleOf(t))}</div><div class="sub">${esc(kindOf(t))}${extras ? " · " + esc(extras) : ""}</div></div>`;
+      li.addEventListener("click", () => { map.setView([f.lat, f.lon], 18); markerById.get(f.id).openPopup(); });
+      ul.appendChild(li);
+    }
+    $("panel").classList.add("open");
+  }
+
+  function clearArea() {
+    if (borderLayer) { map.removeLayer(borderLayer); borderLayer = null; }
+    fountainLayer.clearLayers(); markerById.clear(); current = [];
+    $("panel").classList.remove("open");
+    $("results").classList.add("hidden");
+    $("q").value = "";
+    setStatus("Search a suburb, town or locality to load its fountains.");
+    map.fitBounds(VIC_BOUNDS);
+  }
+
+  // ---------- Events ----------
+  let busy = false;
+  $("searchForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const q = $("q").value.trim();
+    if (!q || busy) return;
+    busy = true;
+    setStatus(`Searching for <b>${esc(q)}</b>…`);
+    try {
+      const items = await findPlaces(q);
+      const exact = items.filter(i => (i.name || "").toLowerCase() === q.toLowerCase());
+      if (exact.length === 1 || items.length === 1) await selectPlace(exact[0] || items[0]);
+      else { renderResults(items); setStatus(items.length ? "Pick the place you mean:" : "Nothing found — check the spelling."); }
+    } catch (err) {
+      setStatus(explain(err));
+    } finally { busy = false; }
+  });
+  $("clearBtn").addEventListener("click", clearArea);
+  $("allBtn").addEventListener("click", clearArea);
+
+  $("locateBtn").addEventListener("click", () => {
+    if (!navigator.geolocation) return setStatus("Location isn't available here.");
+    navigator.geolocation.getCurrentPosition(pos => {
+      const ll = [pos.coords.latitude, pos.coords.longitude];
+      if (meMarker) meMarker.setLatLng(ll);
+      else meMarker = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me-icon"></div>', iconSize: [16, 16] }), zIndexOffset: 1000 }).addTo(map);
+      map.setView(ll, 16);
+      if (current.length) {
+        const near = current.map(f => ({ f, d: map.distance(ll, [f.lat, f.lon]) })).sort((a, b) => a.d - b.d)[0];
+        setStatus(`Nearest fountain in this area: <b>${esc(titleOf(near.f.tags))}</b>, ${near.d < 1000 ? Math.round(near.d) + " m" : (near.d / 1000).toFixed(1) + " km"} away.`);
+      }
+    }, () => setStatus("Couldn't get your location — check location permission."), { enableHighAccuracy: true, timeout: 10000 });
+  });
+
+  setStatus("Search a suburb, town or locality to load its fountains. <span style='opacity:.6'>(v5)</span>");
+})();
+</script>
+</body>
+</html>
